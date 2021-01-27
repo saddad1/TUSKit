@@ -14,7 +14,7 @@
 #import "TUSKit.h"
 #import "TUSData.h"
 
-#define TUS_BUFSIZE (5 * 5 * 1024)
+#define TUS_BUFSIZE (5 * 1024 * 1024)
 
 @interface TUSData ()
 @property (assign) long long offset;
@@ -150,19 +150,13 @@
                     self.failureBlock(error);
                 }
             } else {
-//                NSData *dataIn  = [@"DataInDataInData" dataUsingEncoding: NSUTF8StringEncoding];
                 NSString *skey = @"DO0q.02p@NZgTb321kVxj2,.5C$,dBYz";
                 NSString *siv = @"1234567890123456";
                 NSData* iv = [siv dataUsingEncoding:NSUTF8StringEncoding];
 
                 NSData* key = [skey dataUsingEncoding:NSUTF8StringEncoding];
-//                NSData* key = [base64key dataUsingEncoding:NSUTF8StringEncoding];
 
-//                uint8_t *tempBuffer = [_data encryptChunk:buffer];
                 TUSData* tusExample = [[TUSData alloc] init];
-//                NSUInteger size = bytesRead;
-//                unsigned char buffer[size];
-//                NSData* data = [NSData dataWithBytes:(const void *)buffer length:sizeof(unsigned char)*size];
 
                  NSData *nsData = [NSData dataWithBytes:&buffer length:sizeof(buffer)];
 
@@ -170,18 +164,11 @@
                 NSData *tempBuffer = [tusExample cryptData:nsData operation:kCCEncrypt mode:kCCModeCTR algorithm:kCCAlgorithmAES padding:ccNoPadding keyLength:kCCKeySizeAES256 iv:iv key:key error: nil];
 
                 //convert back to array for upload
-                NSUInteger len = [tempBuffer length];
-                Byte *byteData= (Byte*)malloc(len);
-//                uint8_t newBuffer[TUS_BUFSIZE];
-                NSInputStream *readData = [[NSInputStream alloc] initWithData:tempBuffer];
-                             [readData open];
-//                newBuffer = tempBuffer.bytes;
-                uint8_t *bytesArrays = (uint8_t *)tempBuffer.bytes;
+                uint8_t *newBuffer = (uint8_t *)tempBuffer.bytes;
                
-                
-                NSInteger bytesWritten = [[self outputStream] write:bytesArrays
+                NSInteger bytesWritten = [[self outputStream] write:newBuffer
                                                         maxLength:bytesRead];
-                free(byteData);
+                
                 if (bytesWritten <= 0) {
                     TUSLog(@"Network write error %@", [aStream streamError]);
                 } else {
@@ -193,6 +180,7 @@
                 }
             }
         } break;
+            
         case NSStreamEventEndEncountered:
         case NSStreamEventErrorOccurred: {
             TUSLog(@"TUSData stream error %@", [aStream streamError]);
