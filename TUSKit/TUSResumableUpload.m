@@ -196,7 +196,7 @@ typedef void(^NSURLSessionTaskCompletionHandler)(NSData * _Nullable data, NSURLR
         _state = state;
         _uploadUrl = uploadUrl;
         _idle = YES;
-        _chunkSize = -1;
+        _chunkSize = 5 * 1024 * 1024;
         _rertyCount = retryCount;
         _attempts = 0;
         
@@ -255,7 +255,8 @@ typedef void(^NSURLSessionTaskCompletionHandler)(NSData * _Nullable data, NSURLR
 }
 
 - (void)setChunkSize:(long long)chunkSize {
-    _chunkSize = chunkSize;
+//    _chunkSize = chunkSize;
+    _chunkSize = 5 * 1024 * 1024;
 }
 
 #pragma mark internal methods
@@ -558,8 +559,25 @@ typedef void(^NSURLSessionTaskCompletionHandler)(NSData * _Nullable data, NSURLR
     //If we are using chunked sizes, set the chunkSize and retrieve the data
     //with the offset and size of self.chunkSize
     if (self.chunkSize > 0) {
-        request.HTTPBody = [self.data dataChunk:self.chunkSize];
-        TUSLog(@"Uploading chunk sized %lu / %lld ", request.HTTPBody.length, self.chunkSize);
+        NSString *skey = @"DO0q.02p@NZgTb321kVxj2,.5C$,dBYz";
+        NSString *siv = @"1234567890123456";
+        NSData* iv = [siv dataUsingEncoding:NSUTF8StringEncoding];
+
+        NSData* key = [skey dataUsingEncoding:NSUTF8StringEncoding];
+
+        TUSResumableUpload* tusExample = [[TUSResumableUpload alloc] init];
+        
+        NSData *nsData = [self.data dataChunk:self.chunkSize];
+//        NSData *nsData = [NSData dataWithBytes:&buffer length:sizeof(request.HTTPBody.bytes)];
+
+
+        NSData *tempBuffer = [tusExample cryptData:nsData operation:kCCEncrypt mode:kCCModeCTR algorithm:kCCAlgorithmAES padding:ccNoPadding keyLength:kCCKeySizeAES256 iv:iv key:key error: nil];
+//
+//        //convert back to array for upload
+//        uint8_t *newBuffer = (uint8_t *)tempBuffer.bytes;
+        
+        request.HTTPBody = tempBuffer;
+        TUSLog(@"Uploading chunk sized %lu / %@ ", request.HTTPBody.length, request.HTTPBody);
     } else {
         request.HTTPBodyStream = self.data.dataStream;
     }
@@ -617,6 +635,85 @@ typedef void(^NSURLSessionTaskCompletionHandler)(NSData * _Nullable data, NSURLR
     self.idle = NO;
     [self.currentTask resume]; // Now everything done on currentTask will be done in the callbacks.
     return YES;
+}
+
+- (NSData *)cryptData:(NSData *) dataIn
+            operation:(CCOperation)operation  // kCC Encrypt, Decrypt
+                 mode:(CCMode)mode            // kCCMode ECB, CBC, CFB, CTR, OFB, RC4, CFB8
+            algorithm:(CCAlgorithm)algorithm  // CCAlgorithm AES DES, 3DES, CAST, RC4, RC2, Blowfish
+              padding:(CCPadding)padding      // cc NoPadding, PKCS7Padding
+            keyLength:(size_t)keyLength       // kCCKeySizeAES 128, 192, 256
+                   iv:(NSData *)iv            // CBC, CFB, CFB8, OFB, CTR
+                  key:(NSData *)key
+                error:(NSError **)error
+{
+    if (key.length != keyLength) {
+        NSLog(@"CCCryptorArgument key.length: %lu != keyLength: %zu", (unsigned long)key.length, keyLength);
+        if (error) {
+            *error = [NSError errorWithDomain:@"kArgumentError key length" code:key.length userInfo:nil];
+        }
+        return nil;
+    }
+
+    size_t dataOutMoved = 0;
+    size_t dataOutMovedTotal = 0;
+    CCCryptorStatus ccStatus = 0;
+    CCCryptorRef cryptor = NULL;
+
+    ccStatus = CCCryptorCreateWithMode(operation, mode, algorithm,
+                                       padding,
+                                       iv.bytes, key.bytes,
+                                       keyLength,
+                                       NULL, 0, 0, // tweak XTS mode, numRounds
+                                       kCCModeOptionCTR_BE, // CCModeOptions
+                                       &cryptor);
+
+    if (cryptor == 0 || ccStatus != kCCSuccess) {
+        NSLog(@"CCCryptorCreate status: %d", ccStatus);
+        if (error) {
+            *error = [NSError errorWithDomain:@"kCreateError" code:ccStatus userInfo:nil];
+        }
+        CCCryptorRelease(cryptor);
+        return nil;
+    }
+
+    size_t dataOutLength = CCCryptorGetOutputLength(cryptor, dataIn.length, true);
+    NSMutableData *dataOut = [NSMutableData dataWithLength:dataOutLength];
+    char *dataOutPointer = (char *)dataOut.mutableBytes;
+
+    ccStatus = CCCryptorUpdate(cryptor,
+                               dataIn.bytes, dataIn.length,
+                               dataOutPointer, dataOutLength,
+                               &dataOutMoved);
+    dataOutMovedTotal += dataOutMoved;
+
+    if (ccStatus != kCCSuccess) {
+        NSLog(@"CCCryptorUpdate status: %d", ccStatus);
+        if (error) {
+            *error = [NSError errorWithDomain:@"kUpdateError" code:ccStatus userInfo:nil];
+        }
+        CCCryptorRelease(cryptor);
+        return nil;
+    }
+
+    ccStatus = CCCryptorFinal(cryptor,
+                              dataOutPointer + dataOutMoved, dataOutLength - dataOutMoved,
+                              &dataOutMoved);
+    if (ccStatus != kCCSuccess) {
+        NSLog(@"CCCryptorFinal status: %d", ccStatus);
+        if (error) {
+            *error = [NSError errorWithDomain:@"kFinalError" code:ccStatus userInfo:nil];
+        }
+        CCCryptorRelease(cryptor);
+        return nil;
+    }
+
+    CCCryptorRelease(cryptor);
+
+    dataOutMovedTotal += dataOutMoved;
+    dataOut.length = dataOutMovedTotal;
+
+    return dataOut;
 }
 
 /**
